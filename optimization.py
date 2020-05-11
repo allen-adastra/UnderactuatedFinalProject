@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 from dynamics import Dynamics
 from tire_model import TireModel
 from utils import unpack_force_vector, unpack_state_vector, pack_state_vector, pack_force_vector, extract_time_series
-from world import Ellipse
-from visualize import plot_planned_trajectory, plot_slips, plot_puddles, plot_forces
+from world import EllipseArc
+from visualize import plot_planned_trajectory, plot_slips, plot_puddles, plot_forces, plot_ellipse_arc
 from animate import generate_animation
 from puddles import PuddleModel
 from config import *
@@ -23,7 +23,7 @@ class Optimization:
         self.dt = config["dt"]
         self.initial_state = config["xinit"]
         self.goal_state = config["xgoal"]
-        self.ellipse = config["ellipse"]
+        self.ellipse_arc = config["ellipse_arc"]
         self.deviation_cost = config["deviation_cost"]
         self.Qf = config["Qf"]
         self.min_xdot = config["min_xdot"]
@@ -133,7 +133,7 @@ class Optimization:
                 # Store the results.
                 gforces[i] = pack_force_vector(forces)
                 all_slips[i] = slips
-                
+
         elif self.force_constraint == ForceConstraint.MEAN_CONSTRAINED or self.force_constraint==ForceConstraint.CHANCE_CONSTRAINED:
             # mean model is a function that maps (slip_ratio, slip_angle, x, y) -> (E[Fx], E[Fy])
             mean_model = self.tire_model.get_mean_model(self.puddle_model.get_mean_fun())
@@ -165,6 +165,7 @@ class Optimization:
             ys = gstate[:, 5]
             fig, ax = plt.subplots()
             plot_puddles(ax, self.puddle_model)
+            plot_ellipse_arc(ax, self.ellipse_arc)
             plot_planned_trajectory(ax, xs, ys, psis, gsteers)
             # Plot the slip ratios/angles
             plot_slips(all_slips)
@@ -183,8 +184,21 @@ class Optimization:
         solver_details = result.get_solver_details()
         print("Exit flag: " + str(solver_details.info))
 
-        state_res = result.GetSolution(self.state)
+        self.visualize_results(result)
 
+
+    def visualize_results(self, result):
+        state_res = result.GetSolution(self.state)
+        psis = state_res[:, 2]
+        xs = state_res[:, 4]
+        ys = state_res[:, 5]
+        steers = result.GetSolution(self.steers)
+
+        fig, ax = plt.subplots()
+        plot_puddles(ax, self.puddle_model)
+        plot_planned_trajectory(ax, xs, ys, psis, steers)
+        generate_animation(xs, ys, psis, steers, self.lf, self.lr, 0.5, 0.25, self.dt, puddle_model=self.puddle_model)
+        plt.show()
 
     def add_cost(self, state):
         # Add the final state cost function.
@@ -192,7 +206,7 @@ class Optimization:
         self.prog.AddQuadraticCost(diff_state.T @ self.Qf @ diff_state)
 
         # Get the approx distance function for the ellipse.
-        fun = self.ellipse.approx_dist_fun()
+        fun = self.ellipse_arc.approx_dist_fun()
         for i in range(self.T):
             s = unpack_state_vector(state[i])
             self.prog.AddCost(self.deviation_cost * fun(s["X"], s["Y"]))
@@ -208,11 +222,13 @@ class Optimization:
             # get the tire model at this position in space.
             tire_model = lambda slip_ratio, slip_angle : mean_model(slip_ratio, slip_angle, s["X"], s["Y"])
 
+            # Unpack values
             delta = self.steers[i]
             alpha_f, alpha_r = self.dynamics.slip_angles(s["xdot"], s["ydot"], s["psidot"], delta)
             kappa_f = self.slip_ratios[i, 0]
             kappa_r = self.slip_ratios[i, 1]
 
+            # Compute expected forces.
             E_Ffx, E_Ffy = tire_model(kappa_f, alpha_f)
             E_Frx, E_Fry = tire_model(kappa_r, alpha_r)
 
@@ -251,11 +267,11 @@ class Optimization:
             self.prog.AddConstraint(Fry - F["r_lat"] == 0.0)
 
 if __name__ == "__main__":
-    initial_guess_config = {"start_delta" : 0.0, "end_delta" : 0.4, "ramp_steps" : 20}
+    initial_guess_config = {"start_delta" : 0.0, "end_delta" : 0.5, "ramp_steps" : 50}
 
     # Create a puddle model.
-    centers = [np.array([4.0, 4.0])]
-    shapes = [np.array([[4.0, -1.0], [-1.0, 6.0]])]
+    centers = [np.array([4.0, 3.0])]
+    shapes = [np.array([[5.0, -1.0], [-1.0, 6.0]])]
     mean_scales = [1.0]
     variance_scales = [0.5] 
     puddle_model = PuddleModel(centers, shapes, mean_scales, variance_scales)
@@ -268,13 +284,13 @@ if __name__ == "__main__":
     # Mass and Iz are for Oldsmobile Ciera 1985: http://www.mchenrysoftware.com/forum/Yaw%20Inertia.pdf
     "m" : 1279.0,
     "Iz" : 2416.97512,
-    "T" : 100,
-    "dt" : 0.02,
+    "T" : 200,
+    "dt" : 0.01,
     "pacejka_params" : {"Bx":25, "Cx":2.1, "Dx":30000.0, "Ex":-0.4, 
             "By":15.5, "Cy":2.0, "Dy":20000.0, "Ey":-1.6, "k_alpha_ratio":9.0/7.0},
     "xinit" : {"xdot" : 5.0, "ydot" : 0.0, "psi" : 0.0, "psidot": 0.0, "X" : 0.0, "Y" : 0.0},
-    "xgoal" : {"xdot" : 5.0, "ydot" : 0.0, "psi" : -0.5 * math.pi, "psidot": 0.0, "X" : 1.0, "Y" : -1.0},
-    "ellipse" : Ellipse(20.0, 20.0, 0, -20.0), # Parameters of the ellipse path
+    "xgoal" : {"xdot" : 5.0, "ydot" : 0.0, "psi" : math.pi, "psidot": 0.0, "X" : 0.0, "Y" : 6.0},
+    "ellipse_arc" : EllipseArc(5.0, 2.5, 0, 2.5, -0.5*math.pi, 0.5*math.pi), # Parameters of the ellipse path
     "deviation_cost" : 1.0, # Cost on deviation from the ellipse
     "Qf" : np.diag([1.0, 1.0, 1.0, 1.0, 10.0, 10.0]), # Final state cost matrix.
     "min_xdot" : 0.01, # prevent numerical issues because slip angles divide by xdot
@@ -284,8 +300,8 @@ if __name__ == "__main__":
     "max_delta" : 0.2, # maximum steering angle
     "initial_guess_config" : initial_guess_config, # parameters for generating the initial guess\
     "puddle_model" : puddle_model, # an instance of PuddleModel
-    "force_constraint" : ForceConstraint.NO_PUDDLE, # specify the type of force constraint
-    "visualize_initial_guess" : False
+    "force_constraint" : ForceConstraint.MEAN_CONSTRAINED, # specify the type of force constraint
+    "visualize_initial_guess" : True
     }
     opt = Optimization(config)
     opt.build_program()

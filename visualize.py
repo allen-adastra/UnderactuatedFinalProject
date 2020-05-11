@@ -98,3 +98,10 @@ def plot_puddles(ax, puddle_model):
         angle = np.arctan2(eigvecs[1, 1], eigvecs[0, 1]) * 180 / np.pi
         ell = Ellipse(center, x_length, y_length, -angle)
         ax.add_patch(ell)
+
+def plot_ellipse_arc(ax, ea, n_pts = 50):
+    ts = np.linspace(ea.start_t, ea.end_t, n_pts)
+    out = [ea.eval_parametric(t) for t in ts]
+    xs = [o[0] for o in out]
+    ys = [o[1] for o in out]
+    ax.plot(xs, ys)
