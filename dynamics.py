@@ -1,8 +1,16 @@
 import pydrake.math as pmath
 import numpy as np
 import math
+from dataclasses import dataclass
 
 from utils import unpack_force_vector, unpack_state_vector
+
+@dataclass
+class SlipParameters:
+    kappa_f : float
+    kappa_r : float
+    alpha_f : float
+    alpha_r : float
 
 class Dynamics:
     def __init__(self, lf, lr, m, Iz, dt):
@@ -19,26 +27,26 @@ class Dynamics:
         rear = -pmath.atan2(ydot - self.lr*psidot, xdot)
         return front, rear
     
-    def simulate(self, state, delta, f_kappa, r_kappa, pacejka_model, dt):
+    def simulate(self, state, delta, kappa_f, kappa_r, pacejka_model, dt):
         """
 
         Args:
             state (1D numpy array): initial state [xdot, ydot, psi, psidot, X, Y]
             delta (float): steer angle
-            f_kappa (float): front slip ratio
-            r_kappa (float): rear slip ratio
+            kappa_f (float): front slip ratio
+            kappa_r (float): rear slip ratio
             pacejka_model (function): signature (slip_ratio, slip_angle) -> (Flong, Flat)
         """
-        k1, forces = self.f(state, delta, f_kappa, r_kappa, pacejka_model)
-        k2, _ = self.f(state + dt * 0.5 * k1, delta, f_kappa, r_kappa, pacejka_model)
-        k3, _ = self.f(state + dt * 0.5 * k2, delta, f_kappa, r_kappa, pacejka_model)
-        k4, _ = self.f(state + dt * k3, delta, f_kappa, r_kappa, pacejka_model)
+        k1, forces, slips = self.f(state, delta, kappa_f, kappa_r, pacejka_model)
+        k2, _, _ = self.f(state + dt * 0.5 * k1, delta, kappa_f, kappa_r, pacejka_model)
+        k3, _, _ = self.f(state + dt * 0.5 * k2, delta, kappa_f, kappa_r, pacejka_model)
+        k4, _, _ = self.f(state + dt * k3, delta, kappa_f, kappa_r, pacejka_model)
 
         new_state = state + (1.0/6.0)*dt*(k1 + 2.0*k2 + 2.0*k3 + k4)
 
-        return new_state, forces
+        return new_state, forces, slips
 
-    def f(self, state, delta, f_kappa, r_kappa, pacejka_model):
+    def f(self, state, delta, kappa_f, kappa_r, pacejka_model):
         """
 
         Args:
@@ -51,9 +59,9 @@ class Dynamics:
         ydot = state[1]
         psi = state[2]
         psidot = state[3]
-        f_alpha, r_alpha = self.slip_angles(xdot, ydot, psidot, delta)
-        F_f_long, F_f_lat = pacejka_model(f_kappa, f_alpha)
-        F_r_long, F_r_lat = pacejka_model(r_kappa, r_alpha)
+        alpha_f, alpha_r = self.slip_angles(xdot, ydot, psidot, delta)
+        F_f_long, F_f_lat = pacejka_model(kappa_f, alpha_f)
+        F_r_long, F_r_lat = pacejka_model(kappa_r, alpha_r)
 
         # Trigonometric functions of variables
         cos_d = math.cos(delta)
@@ -73,8 +81,10 @@ class Dynamics:
                     xdot*cos_psi - ydot*sin_psi, #Xdot
                     xdot*sin_psi + ydot*cos_psi #Ydot
                     ])
+
+        slips = SlipParameters(kappa_f=kappa_f, kappa_r=kappa_r, alpha_f=alpha_f, alpha_r=alpha_r)
         forces = {"f_long" : F_f_long, "f_lat" : F_f_lat, "r_long" : F_r_long, "r_lat" : F_r_lat}
-        return derivs, forces
+        return derivs, forces, slips
 
     def nominal_dynamics(self, s0, s1, F, delta):
         """ Return the residuals for the nominal dynamics of the vehicle.

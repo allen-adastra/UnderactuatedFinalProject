@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 def array_norm(array1, array2):
   """
@@ -63,3 +64,14 @@ def extract_time_series(state):
             "X" : state[:, 4].tolist(),
             "Y" : state[:, 5].tolist()}
   return states
+
+def rotation(angle):
+    c = math.cos(angle)
+    s = math.sin(angle)
+    return np.array([[c, -s], [s, c]])
+
+def center_to_botleft(xy, rect_angle, wheel_length, wheel_width):
+    """ Given the center position of a rectangle, find its bottom left position.
+
+    """
+    return xy - (rotation(rect_angle) @ np.array([[0.5*wheel_length],[0.5*wheel_width]])).flatten()
