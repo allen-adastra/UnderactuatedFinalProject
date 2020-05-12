@@ -4,7 +4,7 @@ from matplotlib.patches import Ellipse, Rectangle
 import math
 import utils
 
-def plot_planned_trajectory(ax, xs, ys, headings, steers, interval = 20):
+def plot_planned_trajectory(ax, xs, ys, headings, steers, physical_params, interval = 20):
     """
     Plot planned trajectory with the ellipse around the vehicle.
     Args:
@@ -18,7 +18,7 @@ def plot_planned_trajectory(ax, xs, ys, headings, steers, interval = 20):
         # ellipse = Ellipse(xy = (x, y), width = x_length, height = y_length, angle = np.rad2deg(heading), alpha = 0.4, ec = "k", fc = fc)
         # ax.add_patch(ellipse)
         if i % interval == 0:
-            plot_vehicle(ax, xs[i], ys[i], headings[i], steers[i], 0.7, 0.7, 0.5, 0.25)
+            plot_vehicle(ax, xs[i], ys[i], headings[i], steers[i], 0.7, 0.7, physical_params.wheel_length, physical_params.wheel_width)
     ax.set_xlabel("X Position")
     ax.set_ylabel("Y Position")
     ax.axis('equal')
@@ -104,4 +104,4 @@ def plot_ellipse_arc(ax, ea, n_pts = 50):
     out = [ea.eval_parametric(t) for t in ts]
     xs = [o[0] for o in out]
     ys = [o[1] for o in out]
-    ax.plot(xs, ys)
+    ax.plot(xs, ys, "k--", linewidth=2)

@@ -28,13 +28,11 @@ class TireModel:
     Bx = self._params["Bx"]
     Cx = self._params["Cx"]
     Dx = self._params["Dx"]
-    Ex = self._params["Ex"]
   
     # Lateral parameters.
     By = self._params["By"]
     Cy = self._params["Cy"]
     Dy = self._params["Dy"]
-    Ey = self._params["Ey"]
     gamma = self._params["k_alpha_ratio"]
 
     def pacejka_model(slip_ratio, slip_angle):
@@ -42,13 +40,13 @@ class TireModel:
       # Modified longitudinal slip ratios
       k_mod = np.linalg.norm([slip_ratio, gamma * slip_angle])
       k_adjusted = slip_ratio/k_mod
-      Fx = k_adjusted*Dx*pmath.sin(Cx*pmath.atan(Bx*k_mod-Ex*(Bx*k_mod-pmath.atan(Bx*k_mod))))
+      Fx = k_adjusted*Dx*pmath.sin(Cx*pmath.atan(Bx*k_mod))
       
       # Lateral forces
       # Modified lateral slip angles
       alpha_mod = np.linalg.norm([slip_angle, slip_ratio/gamma])
       alpha_adjusted = slip_angle/alpha_mod
-      Fy = alpha_adjusted*Dy*pmath.sin(Cy*pmath.atan(By*alpha_mod-Ey*(By*alpha_mod-pmath.atan(By*alpha_mod))))
+      Fy = alpha_adjusted*Dy*pmath.sin(Cy*pmath.atan(By*alpha_mod))
       return Fx, Fy
 
     return pacejka_model
@@ -63,13 +61,11 @@ class TireModel:
     Bx = self._params["Bx"]
     Cx = self._params["Cx"]
     Dx = self._params["Dx"]
-    Ex = self._params["Ex"]
   
     # Lateral parameters.
     By = self._params["By"]
     Cy = self._params["Cy"]
     Dy = self._params["Dy"]
-    Ey = self._params["Ey"]
     gamma = self._params["k_alpha_ratio"]
 
     def mean_model(slip_ratio, slip_angle, x, y):
@@ -79,13 +75,13 @@ class TireModel:
       # Modified longitudinal slip ratios
       k_mod = np.linalg.norm([slip_ratio, gamma * slip_angle])
       k_adjusted = slip_ratio/k_mod
-      Fx_mean = mean_scaling * Dx * k_adjusted*pmath.sin(Cx*pmath.atan(Bx*k_mod-Ex*(Bx*k_mod-pmath.atan(Bx*k_mod))))
+      Fx_mean = mean_scaling * Dx * k_adjusted*pmath.sin(Cx*pmath.atan(Bx*k_mod))
       
       # Lateral forces
       # Modified lateral slip angles
       alpha_mod = np.linalg.norm([slip_angle, slip_ratio/gamma])
       alpha_adjusted = slip_angle/alpha_mod
-      Fy_mean = mean_scaling * Dy * alpha_adjusted*pmath.sin(Cy*pmath.atan(By*alpha_mod-Ey*(By*alpha_mod-pmath.atan(By*alpha_mod))))
+      Fy_mean = mean_scaling * Dy * alpha_adjusted*pmath.sin(Cy*pmath.atan(By*alpha_mod))
       return Fx_mean, Fy_mean
     return mean_model
 
@@ -105,13 +101,11 @@ class TireModel:
     Bx = self._params["Bx"]
     Cx = self._params["Cx"]
     Dx = self._params["Dx"]
-    Ex = self._params["Ex"]
   
     # Lateral parameters.
     By = self._params["By"]
     Cy = self._params["Cy"]
     Dy = self._params["Dy"]
-    Ey = self._params["Ey"]
     gamma = self._params["k_alpha_ratio"]
 
     def mean_variance_model(slip_ratio, slip_angle, x, y):
@@ -123,7 +117,7 @@ class TireModel:
       k_mod = np.linalg.norm([slip_ratio, gamma * slip_angle])
       k_adjusted = slip_ratio/k_mod
       # Slip dependent component.
-      k_slip_dependent = k_adjusted*pmath.sin(Cx*pmath.atan(Bx*k_mod-Ex*(Bx*k_mod-pmath.atan(Bx*k_mod))))
+      k_slip_dependent = k_adjusted*pmath.sin(Cx*pmath.atan(Bx*k_mod))
       # Compute the mean and variance.
       # For a random variable with variance Var[X], we have Var[aX] = a^2 Var[X]
       Fx_mean = mean_scaling * Dx * k_slip_dependent
@@ -133,11 +127,35 @@ class TireModel:
       # Modified lateral slip angles
       alpha_mod = np.linalg.norm([slip_angle, slip_ratio/gamma])
       alpha_adjusted = slip_angle/alpha_mod
-      alpha_slip_dependent = alpha_adjusted*pmath.sin(Cy*pmath.atan(By*alpha_mod-Ey*(By*alpha_mod-pmath.atan(By*alpha_mod))))
+      alpha_slip_dependent = alpha_adjusted*pmath.sin(Cy*pmath.atan(By*alpha_mod))
       Fy_mean = mean_scaling * Dy * alpha_slip_dependent
       Fy_var = alpha_slip_dependent**2.0 * (base_coeff_variance * var_scaling)
       return (Fx_mean, Fx_var), (Fy_mean, Fy_var)
     return mean_variance_model
+
+  def compare(self):
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True)
+    model1 = self.get_deterministic_model()
+    model2 = self.get_simplified()
+    k = 0.02
+    alphas = np.linspace(-0.1, 0.1, 100)
+
+    forces1 = [model1(k, a) for a in alphas]
+    fx1 = [f[0] for f in forces1]
+    fy1 = [f[1] for f in forces1]
+    net_force1 = [np.linalg.norm(np.asarray(f)) for f in forces1]
+
+    forces2 = [model2(k, a) for a in alphas]
+    fx2 = [f[0] for f in forces2]
+    fy2 = [f[1] for f in forces2]
+    net_force2 = [np.linalg.norm(np.asarray(f)) for f in forces2]
+
+    ax1.plot(alphas, fx1)
+    ax1.plot(alphas, fx2)
+    ax2.plot(alphas, fy1)
+    ax2.plot(alphas, fy2)
+    ax3.plot(alphas, net_force1)
+    ax3.plot(alphas, net_force2)
 
   def plot_cross_sections(self):
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True)
@@ -176,10 +194,8 @@ class TireModel:
       plt.set_cmap("viridis_r")
       res = ax.contour3D(slip_ratios, slip_angles, net_force, 50)
 
-
 if __name__ == "__main__":
-    params = {"Bx":25, "Cx":2.1, "Dx":3200, "Ex":-0.4, 
-              "By":15.5, "Cy":2.0, "Dy":2900, "Ey":-1.6, "k_alpha_ratio":9.0/7.0}
-    m = TireModel(params)
-    m.plot_cross_sections()
+    m = TireModel({"Bx":25, "Cx":2.1, "Dx":32000,
+                            "By":15.5, "Cy":2.0, "Dy":29000, "k_alpha_ratio":9.0/7.0})
+    m.plot_surface()
     plt.show()

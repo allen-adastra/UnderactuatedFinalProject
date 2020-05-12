@@ -15,10 +15,7 @@ from config import *
 
 class Optimization:
     def __init__(self, config):
-        self.lf = config["lf"]
-        self.lr = config["lr"]
-        self.m = config["m"]
-        self.Iz = config["Iz"]
+        self.physical_params = config["physical_params"]
         self.T = config["T"]
         self.dt = config["dt"]
         self.initial_state = config["xinit"]
@@ -26,20 +23,15 @@ class Optimization:
         self.ellipse_arc = config["ellipse_arc"]
         self.deviation_cost = config["deviation_cost"]
         self.Qf = config["Qf"]
-        self.min_xdot = config["min_xdot"]
-        self.min_slip_ratio_mag = config["min_slip_ratio_mag"]
-        self.max_ddelta = config["max_ddelta"]
-        self.max_dkappa = config["max_dkappa"]
-        self.max_delta = config["max_delta"]
+        self.limits = config["limits"]
         self.n_state = 6
         self.n_nominal_forces = 4
-        self.pacejka_params = config["pacejka_params"]
+        self.tire_model = config["tire_model"]
         self.initial_guess_config = config["initial_guess_config"]
         self.puddle_model = config["puddle_model"]
         self.force_constraint = config["force_constraint"]
         self.visualize_initial_guess = config["visualize_initial_guess"]
-        self.dynamics = Dynamics(self.lf, self.lr, self.m, self.Iz, self.dt)
-        self.tire_model = TireModel(self.pacejka_params)
+        self.dynamics = Dynamics(self.physical_params.lf, self.physical_params.lr, self.physical_params.m, self.physical_params.Iz, self.dt)
     
     def build_program(self):
         self.prog = MathematicalProgram()
@@ -62,29 +54,29 @@ class Optimization:
         # Constrain xdot to always be at least some value to prevent numerical issues with optimizer.
         for i in range(self.T + 1):
             s = unpack_state_vector(state[i])
-            self.prog.AddConstraint(s["xdot"] >= self.min_xdot)
+            self.prog.AddConstraint(s["xdot"] >= self.limits.min_xdot)
 
             # Constrain slip ratio to be at least a certain magnitude.
             if i!=self.T:
-                self.prog.AddConstraint(slip_ratios[i, 0]**2.0 >= self.min_slip_ratio_mag**2.0)
-                self.prog.AddConstraint(slip_ratios[i, 1]**2.0 >= self.min_slip_ratio_mag**2.0)
+                self.prog.AddConstraint(slip_ratios[i, 0]**2.0 >= self.limits.min_slip_ratio_mag**2.0)
+                self.prog.AddConstraint(slip_ratios[i, 1]**2.0 >= self.limits.min_slip_ratio_mag**2.0)
 
         # Control rate limits.
         for i in range(self.T-1):
             ddelta = self.dt * (steers[i+1] - steers[i])
             f_dkappa = self.dt * (slip_ratios[i+1, 0] - slip_ratios[i, 0])
             r_dkappa = self.dt * (slip_ratios[i+1, 1] - slip_ratios[i, 1])
-            self.prog.AddConstraint(ddelta <= self.max_ddelta)
-            self.prog.AddConstraint(ddelta >= -self.max_ddelta)
-            self.prog.AddConstraint(f_dkappa <= self.max_dkappa)
-            self.prog.AddConstraint(f_dkappa >= -self.max_dkappa)
-            self.prog.AddConstraint(r_dkappa <= self.max_dkappa)
-            self.prog.AddConstraint(r_dkappa >= -self.max_dkappa)
+            self.prog.AddConstraint(ddelta <= self.limits.max_ddelta)
+            self.prog.AddConstraint(ddelta >= -self.limits.max_ddelta)
+            self.prog.AddConstraint(f_dkappa <= self.limits.max_dkappa)
+            self.prog.AddConstraint(f_dkappa >= -self.limits.max_dkappa)
+            self.prog.AddConstraint(r_dkappa <= self.limits.max_dkappa)
+            self.prog.AddConstraint(r_dkappa >= -self.limits.max_dkappa)
         
         # Control value limits.
         for i in range(self.T):
-            self.prog.AddConstraint(steers[i] <= self.max_delta)
-            self.prog.AddConstraint(steers[i] >= -self.max_delta)
+            self.prog.AddConstraint(steers[i] <= self.limits.max_delta)
+            self.prog.AddConstraint(steers[i] >= -self.limits.max_delta)
 
         # Add dynamics constraints by constraining residuals to be zero.
         for i in range(self.T):
@@ -100,13 +92,15 @@ class Optimization:
             self.add_no_puddle_force_constraints(state, nominal_forces, steers, self.tire_model.get_deterministic_model(), slip_ratios)
         elif self.force_constraint == ForceConstraint.MEAN_CONSTRAINED:
             self.add_mean_constrained()
+        elif self.force_constraint == ForceConstraint.CHANCE_CONSTRAINED:
+            self.add_chance_constraints()
         else:
-            raise NotImplementedError("ForceConstraint type not implemented.")
+            raise NotImplementedError("ForceConstraint type invalid.")
         return
 
     def constant_input_initial_guess(self, state, steers, slip_ratios, nominal_forces):
         # Guess the slip ratio as the minimum allowed value.
-        gslip_ratios = np.tile(np.array([self.min_slip_ratio_mag, self.min_slip_ratio_mag]), (self.T,1))
+        gslip_ratios = np.tile(np.array([self.limits.min_slip_ratio_mag, self.limits.min_slip_ratio_mag]), (self.T,1))
 
         # Guess the slip angle as a linearly ramping steer that then becomes constant.
         # This is done by creating an array of values corresponding to end_delta then
@@ -122,6 +116,8 @@ class Optimization:
         gforces = np.empty((self.T, 4))
         all_slips = self.T * [None]
 
+        # Simulate the dynamics for the initial guess differently depending on the force
+        # constraint being used.
         if self.force_constraint == ForceConstraint.NO_PUDDLE:
             tire_model = self.tire_model.get_deterministic_model()
             for i in range(self.T):
@@ -133,7 +129,6 @@ class Optimization:
                 # Store the results.
                 gforces[i] = pack_force_vector(forces)
                 all_slips[i] = slips
-
         elif self.force_constraint == ForceConstraint.MEAN_CONSTRAINED or self.force_constraint==ForceConstraint.CHANCE_CONSTRAINED:
             # mean model is a function that maps (slip_ratio, slip_angle, x, y) -> (E[Fx], E[Fy])
             mean_model = self.tire_model.get_mean_model(self.puddle_model.get_mean_fun())
@@ -150,6 +145,8 @@ class Optimization:
                 # Store the results.
                 gforces[i] = pack_force_vector(forces)
                 all_slips[i] = slips
+        else:
+            raise NotImplementedError("Invalid value for self.force_constraint")
 
         # Declare array for the initial guess and set the values.
         initial_guess = np.empty(self.prog.num_vars())
@@ -164,14 +161,17 @@ class Optimization:
             xs = gstate[:, 4]
             ys = gstate[:, 5]
             fig, ax = plt.subplots()
-            plot_puddles(ax, self.puddle_model)
+            if self.force_constraint != ForceConstraint.NO_PUDDLE:
+                plot_puddles(ax, self.puddle_model)
             plot_ellipse_arc(ax, self.ellipse_arc)
-            plot_planned_trajectory(ax, xs, ys, psis, gsteers)
+            plot_planned_trajectory(ax, xs, ys, psis, gsteers, self.physical_params)
             # Plot the slip ratios/angles
             plot_slips(all_slips)
             plot_forces(gforces)
-            generate_animation(xs, ys, psis, gsteers, self.lf, self.lr, 0.5, 0.25, self.dt, puddle_model=self.puddle_model)
-
+            if self.force_constraint == ForceConstraint.NO_PUDDLE:
+                generate_animation(xs, ys, psis, gsteers, self.physical_params, self.dt, puddle_model=None)
+            else:
+                generate_animation(xs, ys, psis, gsteers, self.physical_params, self.dt, puddle_model=self.puddle_model)
         return initial_guess
 
     def solve_program(self):
@@ -186,7 +186,6 @@ class Optimization:
 
         self.visualize_results(result)
 
-
     def visualize_results(self, result):
         state_res = result.GetSolution(self.state)
         psis = state_res[:, 2]
@@ -195,9 +194,10 @@ class Optimization:
         steers = result.GetSolution(self.steers)
 
         fig, ax = plt.subplots()
+        plot_ellipse_arc(ax, self.ellipse_arc)
         plot_puddles(ax, self.puddle_model)
-        plot_planned_trajectory(ax, xs, ys, psis, steers)
-        generate_animation(xs, ys, psis, steers, self.lf, self.lr, 0.5, 0.25, self.dt, puddle_model=self.puddle_model)
+        plot_planned_trajectory(ax, xs, ys, psis, steers, self.physical_params)
+        generate_animation(xs, ys, psis, steers, self.physical_params, self.dt, puddle_model=self.puddle_model)
         plt.show()
 
     def add_cost(self, state):
@@ -238,6 +238,9 @@ class Optimization:
             self.prog.AddConstraint(E_Ffy - F["f_lat"] == 0.0)
             self.prog.AddConstraint(E_Frx - F["r_long"] == 0.0)
             self.prog.AddConstraint(E_Fry - F["r_lat"] == 0.0)
+    
+    def add_chance_constrained(self):
+        pass
 
     def add_no_puddle_force_constraints(self, state, forces, steers, pacejka_model, slip_ratios):
         """
@@ -267,10 +270,10 @@ class Optimization:
             self.prog.AddConstraint(Fry - F["r_lat"] == 0.0)
 
 if __name__ == "__main__":
-    initial_guess_config = {"start_delta" : 0.0, "end_delta" : 0.5, "ramp_steps" : 50}
+    initial_guess_config = {"start_delta" : 0.0, "end_delta" : 0.5, "ramp_steps" : 20}
 
     # Create a puddle model.
-    centers = [np.array([4.0, 3.0])]
+    centers = [np.array([4.0, 2.5])]
     shapes = [np.array([[5.0, -1.0], [-1.0, 6.0]])]
     mean_scales = [1.0]
     variance_scales = [0.5] 
@@ -279,29 +282,22 @@ if __name__ == "__main__":
 
     # Configuration variables
     config = {
-    "lf" : 0.7,
-    "lr" : 0.7,
     # Mass and Iz are for Oldsmobile Ciera 1985: http://www.mchenrysoftware.com/forum/Yaw%20Inertia.pdf
-    "m" : 1279.0,
-    "Iz" : 2416.97512,
-    "T" : 200,
-    "dt" : 0.01,
-    "pacejka_params" : {"Bx":25, "Cx":2.1, "Dx":30000.0, "Ex":-0.4, 
-            "By":15.5, "Cy":2.0, "Dy":20000.0, "Ey":-1.6, "k_alpha_ratio":9.0/7.0},
-    "xinit" : {"xdot" : 5.0, "ydot" : 0.0, "psi" : 0.0, "psidot": 0.0, "X" : 0.0, "Y" : 0.0},
-    "xgoal" : {"xdot" : 5.0, "ydot" : 0.0, "psi" : math.pi, "psidot": 0.0, "X" : 0.0, "Y" : 6.0},
+    "physical_params" : PhysicalParams(lf=0.7, lr=0.7, m=1279.0, Iz=2417.0, wheel_length=0.5, wheel_width=0.25),
+    "T" : 100,
+    "dt" : 0.03,
+    "tire_model" : TireModel({"Bx":25, "Cx":2.1, "Dx":32000,
+                        "By":15.5, "Cy":2.0, "Dy":29000, "k_alpha_ratio":9.0/7.0}),
+    "xinit" : {"xdot" : 6.0, "ydot" : 0.0, "psi" : 0.0, "psidot": 0.0, "X" : 0.0, "Y" : 0.0},
+    "xgoal" : {"xdot" : 6.0, "ydot" : 0.0, "psi" : math.pi, "psidot": 0.0, "X" : 0.0, "Y" : 5.0},
     "ellipse_arc" : EllipseArc(5.0, 2.5, 0, 2.5, -0.5*math.pi, 0.5*math.pi), # Parameters of the ellipse path
-    "deviation_cost" : 1.0, # Cost on deviation from the ellipse
-    "Qf" : np.diag([1.0, 1.0, 1.0, 1.0, 10.0, 10.0]), # Final state cost matrix.
-    "min_xdot" : 0.01, # prevent numerical issues because slip angles divide by xdot
-    "min_slip_ratio_mag" : 1e-5, # prevent numerical issues in the Pacejka model
-    "max_ddelta" : 0.2, # max rad/s for steering
-    "max_dkappa": 0.1, #max change in slip angle per second.
-    "max_delta" : 0.2, # maximum steering angle
+    "deviation_cost" : 10.0, # Cost on deviation from the ellipse
+    "Qf" : np.diag([1.0, 1.0, 1.0, 1.0, 100.0, 100.0]), # Final state cost matrix.
+    "limits" : Limits(min_xdot=0.01, min_slip_ratio_mag=1e-5, max_ddelta=1.0, max_dkappa=0.1, max_delta=0.5),
     "initial_guess_config" : initial_guess_config, # parameters for generating the initial guess\
     "puddle_model" : puddle_model, # an instance of PuddleModel
     "force_constraint" : ForceConstraint.MEAN_CONSTRAINED, # specify the type of force constraint
-    "visualize_initial_guess" : True
+    "visualize_initial_guess" : False
     }
     opt = Optimization(config)
     opt.build_program()

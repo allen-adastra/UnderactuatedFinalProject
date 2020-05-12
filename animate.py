@@ -1,6 +1,8 @@
+import matplotlib
+# matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse, Rectangle
-from matplotlib.animation import FuncAnimation
+from matplotlib.animation import FuncAnimation, FFMpegWriter
 from matplotlib.transforms import Affine2D
 import matplotlib.collections as clt
 import numpy as np
@@ -9,7 +11,7 @@ import utils
 from visualize import plot_puddles
 
 
-def generate_animation(xs, ys, psis, steers, lf, lr, wheel_length, wheel_width, dt, puddle_model = None):
+def generate_animation(xs, ys, psis, steers, physical_params, dt, puddle_model = None):
     # Initialize the figure and artists
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -19,8 +21,8 @@ def generate_animation(xs, ys, psis, steers, lf, lr, wheel_length, wheel_width, 
 
     cg_to_fa, = ax.plot([],[], color="k")
     cg_to_ra, = ax.plot([],[], color="k")
-    patch_front = Rectangle((0.0, 0.0), width=wheel_length, height=wheel_width, color="k")
-    patch_rear = Rectangle((0.0, 0.0), width=wheel_length, height=wheel_width, color="k")
+    patch_front = Rectangle((0.0, 0.0), width=physical_params.wheel_length, height=physical_params.wheel_width, color="k")
+    patch_rear = Rectangle((0.0, 0.0), width=physical_params.wheel_length, height=physical_params.wheel_width, color="k")
     ax.add_patch(patch_front)
     ax.add_patch(patch_rear)
 
@@ -34,10 +36,10 @@ def generate_animation(xs, ys, psis, steers, lf, lr, wheel_length, wheel_width, 
         ax.set_ylim(0, 10)
 
         # Centers of the front wheel x and y
-        front_wheel_xy = np.array([xs[i], ys[i]]) + lf * np.array([math.cos(psis[i]), math.sin(psis[i])])
-        rear_wheel_xy = np.array([xs[i], ys[i]]) - lr * np.array([math.cos(psis[i]), math.sin(psis[i])])
-        front_wheel_xy_bl = utils.center_to_botleft(front_wheel_xy, psis[i] + steers[i], wheel_length, wheel_width)
-        rear_wheel_xy_bl = utils.center_to_botleft(rear_wheel_xy, psis[i], wheel_length, wheel_width)
+        front_wheel_xy = np.array([xs[i], ys[i]]) + physical_params.lf * np.array([math.cos(psis[i]), math.sin(psis[i])])
+        rear_wheel_xy = np.array([xs[i], ys[i]]) - physical_params.lr * np.array([math.cos(psis[i]), math.sin(psis[i])])
+        front_wheel_xy_bl = utils.center_to_botleft(front_wheel_xy, psis[i] + steers[i], physical_params.wheel_length, physical_params.wheel_width)
+        rear_wheel_xy_bl = utils.center_to_botleft(rear_wheel_xy, psis[i], physical_params.wheel_length, physical_params.wheel_width)
 
         # Update the patches by using transforms.
         t1 = Affine2D().rotate(psis[i] + steers[i])
@@ -53,5 +55,8 @@ def generate_animation(xs, ys, psis, steers, lf, lr, wheel_length, wheel_width, 
         cg_to_ra.set_data([xs[i], rear_wheel_xy[0]], [ys[i], rear_wheel_xy[1]])
         return cg_to_fa, cg_to_ra, patch_front, patch_rear
 
-    ani = FuncAnimation(fig, animate, frames=steers.size, interval=1e3*dt, blit=False)
+    ani = FuncAnimation(fig, animate, frames=steers.size, interval=1e3*dt, blit=True)
+    plt.rcParams['animation.ffmpeg_path'] = '/usr/bin/ffmpeg'
+    writer = FFMpegWriter(fps=1.0/dt)
+    # ani.save("animation.mp4", writer=writer, dpi=100)
     plt.show()
